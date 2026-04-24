@@ -643,6 +643,54 @@
 
   // ---------- Rendering ----------
   function drawBackground() {
+    // shining sun
+    const t = performance.now() / 1000;
+    const sx = 1050, sy = 110;
+    const pulse = 1 + Math.sin(t * 2) * 0.08;
+    // outer glow
+    const glow = ctx.createRadialGradient(sx, sy, 20, sx, sy, 180 * pulse);
+    glow.addColorStop(0, 'rgba(255, 240, 150, 0.9)');
+    glow.addColorStop(0.4, 'rgba(255, 210, 90, 0.35)');
+    glow.addColorStop(1, 'rgba(255, 200, 80, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 180 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    // rays
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(t * 0.3);
+    ctx.strokeStyle = 'rgba(255, 230, 120, 0.7)';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 12; i++) {
+      ctx.rotate(Math.PI / 6);
+      const rayLen = 70 + Math.sin(t * 3 + i) * 8;
+      ctx.beginPath();
+      ctx.moveTo(55, 0);
+      ctx.lineTo(55 + rayLen, 0);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // sun body
+    const body = ctx.createRadialGradient(sx - 10, sy - 10, 5, sx, sy, 50);
+    body.addColorStop(0, '#fff7b0');
+    body.addColorStop(0.6, '#ffd84a');
+    body.addColorStop(1, '#f5a623');
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 50, 0, Math.PI * 2);
+    ctx.fill();
+    // smiley face
+    ctx.fillStyle = '#b36b00';
+    ctx.beginPath(); ctx.arc(sx - 15, sy - 8, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + 15, sy - 8, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#b36b00';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(sx, sy + 4, 14, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
+
     // sky gradient already via CSS, but add clouds
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     const clouds = [[120,90,50],[340,60,70],[620,110,60],[900,70,80],[1100,140,55]];
