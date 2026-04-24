@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Angry Birds</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #87CEEB;
+    font-family: 'Trebuchet MS', sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+  #game {
+    display: block;
+    margin: 0 auto;
+    background: linear-gradient(#87CEEB 0%, #B0E0E6 60%, #F5DEB3 60%, #DEB887 100%);
+    cursor: crosshair;
+  }
+  #hud {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    color: #fff;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
+    font-size: 22px;
+    font-weight: bold;
+  }
+  #msg {
+    position: fixed;
+    top: 40%;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: #fff;
+    font-size: 48px;
+    text-shadow: 3px 3px 6px rgba(0,0,0,0.7);
+    pointer-events: none;
+    display: none;
+  }
+  #restart {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    background: #c0392b;
+    color: #fff;
+    border: none;
+    padding: 10px 16px;
+    font-size: 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+  }
+  #restart:hover { background: #e74c3c; }
+  #hint {
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    color: #fff;
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.6);
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  Level: <span id="level">1</span> &nbsp; Birds: <span id="birds">3</span> &nbsp; Score: <span id="score">0</span>
+</div>
+<div id="msg"></div>
+<button id="restart">Restart</button>
+<div id="hint">Drag the bird back on the slingshot and release to launch. Knock out all the pigs!</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = 1200, H = 700;
+  canvas.width = W;
+  canvas.height = H;
+
+  const GROUND_Y = H - 80;
+  const GRAVITY = 0.45;
+  const FRICTION = 0.985;
+  const REST = 0.35;
+  const MAX_PULL = 140;
+  const LAUNCH_POWER = 0.18;
+
+  const levelEl = document.getElementById('level');
+  const birdsEl = document.getElementById('birds');
+  const scoreEl = document.getElementById('score');
+  const msgEl = document.getElementById('msg');
+
+  let score = 0;
+  let currentLevel = 0;
+
+  const slingX = 180, slingY = GROUND_Y - 110;
+
+  // ---------- Entities ----------
+  class Bird {
+    constructor(x, y) {
+      this.x = x; this.y = y;
+      this.vx = 0; this.vy = 0;
+      this.r = 18;
+      this.launched = false;
+      this.resting = false;
+      this.dead = false;
+      this.color = '#e74c3c';
+    }
+    update() {
+      if (!this.launched || this.resting || this.dead) return;
+      this.vy += GRAVITY;
+      this.x += this.vx;
+      this.y += this.vy;
+      if (this.y + this.r > GROUND_Y) {
+        this.y = GROUND_Y - this.r;
+        this.vy *= -REST;
+        this.vx *= 0.75;
+        if (Math.abs(this.vy) < 1 && Math.abs(this.vx) < 0.5) {
+          this.vy = 0; this.vx = 0; this.resting = true;
+        }
+      }
+      if (this.x < -50 || this.x > W + 50) this.dead = true;
+    }
+    draw() {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      // body
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.arc(0, 0, this.r, 0, Math.PI * 2);
+      ctx.fill();
+      // belly
+      ctx.fillStyle = '#f7c6b8';
+      ctx.beginPath();
+      ctx.arc(2, 4, this.r * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+      // eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-5, -5, 4, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(6, -5, 4, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(-4, -5, 2, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(7, -5, 2, 0, Math.PI*2); ctx.fill();
+      // beak
+      ctx.fillStyle = '#f39c12';
+      ctx.beginPath();
+      ctx.moveTo(this.r - 3, 2);
+      ctx.lineTo(this.r + 8, 0);
+      ctx.lineTo(this.r - 3, 6);
+      ctx.closePath();
+      ctx.fill();
+      // brow
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-10, -10); ctx.lineTo(-2, -7);
+      ctx.moveTo(12, -10); ctx.lineTo(3, -7);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  class Block {
+    constructor(x, y, w, h, mat = 'wood') {
+      this.x = x; this.y = y; this.w = w; this.h = h;
+      this.vx = 0; this.vy = 0;
+      this.mat = mat;
+      this.hp = mat === 'stone' ? 3 : mat === 'wood' ? 2 : 1;
+      this.dead = false;
+      this.angle = 0;
+      this.spin = 0;
+    }
+    update() {
+      this.vy += GRAVITY;
+      this.vx *= FRICTION;
+      this.x += this.vx;
+      this.y += this.vy;
+      this.angle += this.spin;
+      this.spin *= 0.95;
+      if (this.y + this.h > GROUND_Y) {
+        this.y = GROUND_Y - this.h;
+        if (Math.abs(this.vy) > 1) this.vy *= -REST; else this.vy = 0;
+        this.vx *= 0.85;
+      }
+    }
+    draw() {
+      ctx.save();
+      ctx.translate(this.x + this.w/2, this.y + this.h/2);
+      ctx.rotate(this.angle);
+      if (this.mat === 'wood') {
+        ctx.fillStyle = '#c08457';
+        ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+        ctx.strokeStyle = '#6d4424';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-this.w/2, -this.h/2, this.w, this.h);
+        ctx.beginPath();
+        for (let i = 1; i < 4; i++) {
+          ctx.moveTo(-this.w/2, -this.h/2 + (this.h/4)*i);
+          ctx.lineTo(this.w/2, -this.h/2 + (this.h/4)*i);
+        }
+        ctx.stroke();
+      } else if (this.mat === 'stone') {
+        ctx.fillStyle = '#7f8c8d';
+        ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+        ctx.strokeStyle = '#2c3e50';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-this.w/2, -this.h/2, this.w, this.h);
+        ctx.fillStyle = '#95a5a6';
+        ctx.fillRect(-this.w/2 + 4, -this.h/2 + 4, this.w - 8, 4);
+      } else {
+        ctx.fillStyle = 'rgba(180, 230, 255, 0.75)';
+        ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+        ctx.strokeStyle = '#4aa5e0';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-this.w/2, -this.h/2, this.w, this.h);
+      }
+      if (this.hp < (this.mat === 'stone' ? 3 : this.mat === 'wood' ? 2 : 1)) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.beginPath();
+        ctx.moveTo(-this.w/2 + 4, -this.h/2 + 4);
+        ctx.lineTo(this.w/2 - 4, this.h/2 - 4);
+        ctx.moveTo(this.w/2 - 6, -this.h/2 + 6);
+        ctx.lineTo(-this.w/2 + 6, this.h/2 - 6);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  class Pig {
+    constructor(x, y, r = 22) {
+      this.x = x; this.y = y; this.r = r;
+      this.vx = 0; this.vy = 0;
+      this.hp = 2;
+      this.dead = false;
+    }
+    update() {
+      this.vy += GRAVITY;
+      this.vx *= FRICTION;
+      this.x += this.vx;
+      this.y += this.vy;
+      if (this.y + this.r > GROUND_Y) {
+        this.y = GROUND_Y - this.r;
+        if (Math.abs(this.vy) > 6) this.hp -= 1;
+        this.vy *= -REST;
+        this.vx *= 0.85;
+      }
+      if (this.hp <= 0) this.dead = true;
+    }
+    draw() {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.fillStyle = this.hp > 1 ? '#7ac142' : '#9acd32';
+      ctx.beginPath();
+      ctx.arc(0, 0, this.r, 0, Math.PI*2);
+      ctx.fill();
+      // ears
+      ctx.fillStyle = '#5a9b2f';
+      ctx.beginPath(); ctx.arc(-this.r*0.7, -this.r*0.7, 6, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(this.r*0.7, -this.r*0.7, 6, 0, Math.PI*2); ctx.fill();
+      // snout
+      ctx.fillStyle = '#6aa832';
+      ctx.beginPath();
+      ctx.ellipse(0, 6, 10, 7, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(-3, 6, 1.5, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(3, 6, 1.5, 0, Math.PI*2); ctx.fill();
+      // eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-7, -5, 5, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(7, -5, 5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(-6, -5, 2, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(8, -5, 2, 0, Math.PI*2); ctx.fill();
+      if (this.hp < 2) {
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-10, 12); ctx.lineTo(-6, 15);
+        ctx.moveTo(10, 12); ctx.lineTo(14, 15);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  // ---------- Particles ----------
+  const particles = [];
+  function burst(x, y, color = '#f39c12', n = 14) {
+    for (let i = 0; i < n; i++) {
+      particles.push({
+        x, y,
+        vx: (Math.random() - 0.5) * 8,
+        vy: (Math.random() - 0.5) * 8 - 2,
+        life: 30 + Math.random() * 20,
+        color
+      });
+    }
+  }
+
+  // ---------- Levels ----------
+  function makeLevel(n) {
+    const blocks = [];
+    const pigs = [];
+    const gy = GROUND_Y;
+    if (n === 1) {
+      blocks.push(new Block(800, gy - 120, 20, 120, 'wood'));
+      blocks.push(new Block(900, gy - 120, 20, 120, 'wood'));
+      blocks.push(new Block(790, gy - 140, 140, 20, 'wood'));
+      pigs.push(new Pig(850, gy - 30));
+      pigs.push(new Pig(850, gy - 160));
+    } else if (n === 2) {
+      blocks.push(new Block(750, gy - 60, 20, 60, 'stone'));
+      blocks.push(new Block(830, gy - 60, 20, 60, 'stone'));
+      blocks.push(new Block(740, gy - 80, 120, 20, 'wood'));
+      blocks.push(new Block(780, gy - 180, 20, 100, 'wood'));
+      blocks.push(new Block(860, gy - 180, 20, 100, 'wood'));
+      blocks.push(new Block(770, gy - 200, 120, 20, 'glass'));
+      pigs.push(new Pig(800, gy - 30));
+      pigs.push(new Pig(800, gy - 110));
+      pigs.push(new Pig(820, gy - 225));
+      pigs.push(new Pig(980, gy - 25, 18));
+    } else {
+      // Level 3 (fortress)
+      blocks.push(new Block(700, gy - 80, 20, 80, 'stone'));
+      blocks.push(new Block(900, gy - 80, 20, 80, 'stone'));
+      blocks.push(new Block(690, gy - 100, 240, 20, 'stone'));
+      blocks.push(new Block(720, gy - 180, 20, 80, 'wood'));
+      blocks.push(new Block(820, gy - 180, 20, 80, 'wood'));
+      blocks.push(new Block(900, gy - 180, 20, 80, 'wood'));
+      blocks.push(new Block(710, gy - 200, 220, 20, 'wood'));
+      blocks.push(new Block(760, gy - 260, 20, 60, 'glass'));
+      blocks.push(new Block(860, gy - 260, 20, 60, 'glass'));
+      blocks.push(new Block(750, gy - 280, 140, 20, 'glass'));
+      pigs.push(new Pig(760, gy - 30));
+      pigs.push(new Pig(860, gy - 30));
+      pigs.push(new Pig(780, gy - 130));
+      pigs.push(new Pig(870, gy - 130));
+      pigs.push(new Pig(810, gy - 225));
+      pigs.push(new Pig(810, gy - 305, 18));
+      pigs.push(new Pig(1050, gy - 25));
+    }
+    return { blocks, pigs, birdsLeft: 3 + Math.floor(n/2) };
+  }
+
+  let state;
+  function loadLevel(n) {
+    currentLevel = n;
+    const L = makeLevel(n);
+    state = {
+      blocks: L.blocks,
+      pigs: L.pigs,
+      birds: [],
+      active: null,
+      birdsLeft: L.birdsLeft,
+      flying: false,
+      ended: false
+    };
+    loadNextBird();
+    updateHUD();
+  }
+
+  function loadNextBird() {
+    if (state.birdsLeft <= 0) return;
+    state.active = new Bird(slingX, slingY);
+    state.birdsLeft -= 1;
+    updateHUD();
+  }
+
+  function updateHUD() {
+    levelEl.textContent = currentLevel;
+    birdsEl.textContent = state.birdsLeft + (state.active && !state.active.launched ? 1 : 0);
+    scoreEl.textContent = score;
+  }
+
+  // ---------- Input ----------
+  let dragging = false;
+  let dragX = slingX, dragY = slingY;
+
+  function pointerPos(e) {
+    const r = canvas.getBoundingClientRect();
+    const sx = canvas.width / r.width;
+    const sy = canvas.height / r.height;
+    return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!state.active || state.active.launched) return;
+    const p = pointerPos(e);
+    const dx = p.x - state.active.x, dy = p.y - state.active.y;
+    if (dx*dx + dy*dy < 50*50) {
+      dragging = true;
+      dragX = p.x; dragY = p.y;
+    }
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const p = pointerPos(e);
+    let dx = p.x - slingX, dy = p.y - slingY;
+    const d = Math.hypot(dx, dy);
+    if (d > MAX_PULL) { dx = dx * MAX_PULL / d; dy = dy * MAX_PULL / d; }
+    dragX = slingX + dx;
+    dragY = slingY + dy;
+    if (state.active) { state.active.x = dragX; state.active.y = dragY; }
+  });
+
+  canvas.addEventListener('pointerup', () => {
+    if (!dragging || !state.active) { dragging = false; return; }
+    dragging = false;
+    const dx = slingX - state.active.x;
+    const dy = slingY - state.active.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 10) {
+      state.active.vx = dx * LAUNCH_POWER;
+      state.active.vy = dy * LAUNCH_POWER;
+      state.active.launched = true;
+      state.flying = true;
+    } else {
+      state.active.x = slingX;
+      state.active.y = slingY;
+    }
+  });
+
+  document.getElementById('restart').addEventListener('click', () => {
+    score = 0;
+    loadLevel(1);
+    hideMessage();
+  });
+
+  // ---------- Collision ----------
+  function circleRectCollide(bird, rect) {
+    const cx = rect.x + rect.w/2, cy = rect.y + rect.h/2;
+    const closestX = Math.max(rect.x, Math.min(bird.x, rect.x + rect.w));
+    const closestY = Math.max(rect.y, Math.min(bird.y, rect.y + rect.h));
+    const dx = bird.x - closestX, dy = bird.y - closestY;
+    const dist2 = dx*dx + dy*dy;
+    if (dist2 < bird.r * bird.r) {
+      const dist = Math.sqrt(dist2) || 0.01;
+      const nx = dx / dist, ny = dy / dist;
+      const overlap = bird.r - dist;
+      bird.x += nx * overlap;
+      bird.y += ny * overlap;
+      const vdotn = bird.vx * nx + bird.vy * ny;
+      if (vdotn < 0) {
+        bird.vx -= (1 + REST) * vdotn * nx;
+        bird.vy -= (1 + REST) * vdotn * ny;
+      }
+      const impact = Math.hypot(bird.vx, bird.vy) + Math.abs(vdotn);
+      rect.vx += nx * impact * 0.4;
+      rect.vy += ny * impact * 0.4;
+      rect.spin += (Math.random() - 0.5) * 0.1;
+      return impact;
+    }
+    return 0;
+  }
+
+  function circleCircleCollide(a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.hypot(dx, dy);
+    const rsum = a.r + b.r;
+    if (d < rsum && d > 0) {
+      const nx = dx / d, ny = dy / d;
+      const overlap = rsum - d;
+      a.x -= nx * overlap * 0.5;
+      a.y -= ny * overlap * 0.5;
+      b.x += nx * overlap * 0.5;
+      b.y += ny * overlap * 0.5;
+      const vrel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+      if (vrel < 0) {
+        const j = -(1 + REST) * vrel / 2;
+        a.vx -= j * nx; a.vy -= j * ny;
+        b.vx += j * nx; b.vy += j * ny;
+      }
+      return Math.abs(vrel);
+    }
+    return 0;
+  }
+
+  function rectRectResolve(a, b) {
+    if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) {
+      const ox1 = (b.x + b.w) - a.x;
+      const ox2 = (a.x + a.w) - b.x;
+      const oy1 = (b.y + b.h) - a.y;
+      const oy2 = (a.y + a.h) - b.y;
+      const ox = Math.min(ox1, ox2);
+      const oy = Math.min(oy1, oy2);
+      if (ox < oy) {
+        if (ox1 < ox2) { a.x += ox; } else { a.x -= ox; }
+        a.vx = (a.vx + b.vx) * 0.3;
+      } else {
+        if (oy1 < oy2) { a.y += oy; a.vy = Math.min(0, a.vy); } else { a.y -= oy; a.vy = 0; }
+        a.vx *= 0.7;
+      }
+    }
+  }
+
+  function pigRectResolve(pig, rect) {
+    const closestX = Math.max(rect.x, Math.min(pig.x, rect.x + rect.w));
+    const closestY = Math.max(rect.y, Math.min(pig.y, rect.y + rect.h));
+    const dx = pig.x - closestX, dy = pig.y - closestY;
+    const dist2 = dx*dx + dy*dy;
+    if (dist2 < pig.r * pig.r) {
+      const dist = Math.sqrt(dist2) || 0.01;
+      const nx = dx / dist, ny = dy / dist;
+      const overlap = pig.r - dist;
+      pig.x += nx * overlap;
+      pig.y += ny * overlap;
+      const vdotn = pig.vx * nx + pig.vy * ny;
+      if (vdotn < 0) {
+        pig.vx -= (1 + 0.2) * vdotn * nx;
+        pig.vy -= (1 + 0.2) * vdotn * ny;
+      }
+    }
+  }
+
+  // ---------- Game loop ----------
+  function update() {
+    if (state.ended) return;
+    const b = state.active;
+    if (b && b.launched && !b.dead) {
+      b.update();
+      // vs blocks
+      for (const blk of state.blocks) {
+        if (blk.dead) continue;
+        const imp = circleRectCollide(b, blk);
+        if (imp > 3) {
+          blk.hp -= Math.floor(imp / 4);
+          if (blk.hp <= 0) {
+            blk.dead = true;
+            burst(blk.x + blk.w/2, blk.y + blk.h/2, blk.mat === 'glass' ? '#bde2ff' : blk.mat === 'wood' ? '#c08457' : '#95a5a6');
+            score += 100;
+          }
+        }
+      }
+      // vs pigs
+      for (const pig of state.pigs) {
+        if (pig.dead) continue;
+        const imp = circleCircleCollide(b, pig);
+        if (imp > 2) {
+          pig.hp -= 2;
+          if (pig.hp <= 0) {
+            pig.dead = true;
+            burst(pig.x, pig.y, '#7ac142', 22);
+            score += 500;
+          }
+        }
+      }
+    }
+
+    // Blocks physics
+    for (const blk of state.blocks) {
+      if (blk.dead) continue;
+      blk.update();
+      for (const other of state.blocks) {
+        if (other === blk || other.dead) continue;
+        rectRectResolve(blk, other);
+      }
+      for (const pig of state.pigs) {
+        if (pig.dead) continue;
+        pigRectResolve(pig, blk);
+        // heavy falling block hurts pig
+        if (blk.vy > 4 && Math.abs(blk.x + blk.w/2 - pig.x) < blk.w/2 + pig.r && Math.abs(blk.y + blk.h - pig.y) < 10) {
+          pig.hp -= 1;
+        }
+      }
+    }
+    // Pigs physics
+    for (const pig of state.pigs) {
+      if (pig.dead) continue;
+      pig.update();
+      for (const other of state.pigs) {
+        if (other === pig || other.dead) continue;
+        circleCircleCollide(pig, other);
+      }
+    }
+
+    // Particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.vy += GRAVITY * 0.5;
+      p.x += p.vx; p.y += p.vy;
+      p.life -= 1;
+      if (p.life <= 0 || p.y > GROUND_Y) particles.splice(i, 1);
+    }
+
+    // Bird rest detection and load next
+    if (b && b.launched) {
+      if (b.resting || b.dead || (Math.abs(b.vx) < 0.3 && Math.abs(b.vy) < 0.3 && b.y + b.r >= GROUND_Y - 1)) {
+        if (!b._restTimer) b._restTimer = 0;
+        b._restTimer += 1;
+        if (b._restTimer > 60) {
+          state.active = null;
+          state.flying = false;
+          setTimeout(checkEnd, 400);
+        }
+      }
+    }
+
+    // Win/lose check
+    if (state.pigs.every(p => p.dead) && !state.ended) {
+      endLevel(true);
+    }
+
+    updateHUD();
+  }
+
+  function checkEnd() {
+    if (state.ended) return;
+    if (state.pigs.every(p => p.dead)) {
+      endLevel(true);
+    } else if (state.birdsLeft <= 0 && !state.active) {
+      endLevel(false);
+    } else {
+      loadNextBird();
+    }
+  }
+
+  function endLevel(won) {
+    state.ended = true;
+    if (won) {
+      score += state.birdsLeft * 1000 + (state.active ? 1000 : 0);
+      if (currentLevel < 3) {
+        showMessage('Level Cleared!', 'Next level…');
+        setTimeout(() => { hideMessage(); loadLevel(currentLevel + 1); }, 1800);
+      } else {
+        showMessage('You Win!', 'Final score: ' + score);
+      }
+    } else {
+      showMessage('Level Failed', 'Click Restart');
+    }
+  }
+
+  function showMessage(title, sub = '') {
+    msgEl.innerHTML = title + (sub ? '<br><span style="font-size:24px">' + sub + '</span>' : '');
+    msgEl.style.display = 'block';
+  }
+  function hideMessage() { msgEl.style.display = 'none'; }
+
+  // ---------- Rendering ----------
+  function drawBackground() {
+    // sky gradient already via CSS, but add clouds
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    const clouds = [[120,90,50],[340,60,70],[620,110,60],[900,70,80],[1100,140,55]];
+    for (const [x,y,r] of clouds) {
+      ctx.beginPath();
+      ctx.arc(x, y, r*0.6, 0, Math.PI*2);
+      ctx.arc(x + r*0.5, y + 4, r*0.5, 0, Math.PI*2);
+      ctx.arc(x - r*0.5, y + 6, r*0.45, 0, Math.PI*2);
+      ctx.fill();
+    }
+    // hills
+    ctx.fillStyle = '#6ab04c';
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND_Y);
+    ctx.quadraticCurveTo(200, GROUND_Y - 80, 400, GROUND_Y - 20);
+    ctx.quadraticCurveTo(600, GROUND_Y - 90, 820, GROUND_Y - 10);
+    ctx.quadraticCurveTo(1000, GROUND_Y - 70, 1200, GROUND_Y - 15);
+    ctx.lineTo(1200, GROUND_Y);
+    ctx.closePath();
+    ctx.fill();
+    // ground
+    ctx.fillStyle = '#8b5a2b';
+    ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    ctx.fillStyle = '#6ab04c';
+    ctx.fillRect(0, GROUND_Y, W, 10);
+  }
+
+  function drawSling() {
+    ctx.strokeStyle = '#5b3a1c';
+    ctx.lineWidth = 10;
+    ctx.lineCap = 'round';
+    // left post
+    ctx.beginPath();
+    ctx.moveTo(slingX - 8, GROUND_Y);
+    ctx.lineTo(slingX - 8, slingY);
+    ctx.stroke();
+    // right post
+    ctx.beginPath();
+    ctx.moveTo(slingX + 8, GROUND_Y);
+    ctx.lineTo(slingX + 8, slingY);
+    ctx.stroke();
+    // bands
+    if (state.active && !state.active.launched) {
+      ctx.strokeStyle = '#2c1a0b';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(slingX - 8, slingY);
+      ctx.lineTo(state.active.x - 4, state.active.y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(slingX + 8, slingY);
+      ctx.lineTo(state.active.x + 4, state.active.y);
+      ctx.stroke();
+    }
+  }
+
+  function drawTrajectory() {
+    if (!dragging || !state.active) return;
+    const vx = (slingX - state.active.x) * LAUNCH_POWER;
+    const vy = (slingY - state.active.y) * LAUNCH_POWER;
+    let x = state.active.x, y = state.active.y;
+    let svx = vx, svy = vy;
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    for (let i = 0; i < 40; i++) {
+      svy += GRAVITY;
+      x += svx; y += svy;
+      if (y > GROUND_Y) break;
+      if (i % 2 === 0) {
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = Math.max(0, p.life / 50);
+      ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawFlightBirds() {
+    // previous fallen birds for flair
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+    drawBackground();
+    drawSling();
+    for (const blk of state.blocks) if (!blk.dead) blk.draw();
+    for (const pig of state.pigs) if (!pig.dead) pig.draw();
+    if (state.active) state.active.draw();
+    drawTrajectory();
+    drawParticles();
+    // queued birds display on left
+    for (let i = 0; i < state.birdsLeft; i++) {
+      ctx.save();
+      ctx.translate(60 + i * 30, GROUND_Y - 20);
+      ctx.fillStyle = '#e74c3c';
+      ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(-3, -3, 1.5, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(4, -3, 1.5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#f39c12';
+      ctx.beginPath(); ctx.moveTo(10, 1); ctx.lineTo(16, 0); ctx.lineTo(10, 4); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function loop() {
+    update();
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // Fit canvas to viewport
+  function fit() {
+    const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    canvas.style.width = (W * s) + 'px';
+    canvas.style.height = (H * s) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  loadLevel(1);
+  loop();
+})();
+</script>
+</body>
+</html>
